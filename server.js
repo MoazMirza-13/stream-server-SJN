@@ -15,12 +15,14 @@ const PORT = 4000;
 // WebSocket Server setup
 const wss = new WebSocket.Server({ noServer: true });
 
-// Key in Redis for viewer count
+// Keys in Redis for
 const VIEWER_COUNT_KEY = "viewer_count";
+const LIKE_COUNT_KEY = "like_count";
 
 // Reset viewer count when the server starts
 (async () => {
   await redisClient.set(VIEWER_COUNT_KEY, 0);
+  await redisClient.set(LIKE_COUNT_KEY, 0);
 })();
 
 // WebSocket connection handling
@@ -31,6 +33,25 @@ wss.on("connection", (ws) => {
   redisClient.incr(VIEWER_COUNT_KEY).then(async () => {
     const viewerCount = await redisClient.get(VIEWER_COUNT_KEY);
     broadcastViewerCount(viewerCount);
+  });
+
+  // Listen for messages from the client
+  ws.on("message", async (message) => {
+    try {
+      const data = JSON.parse(message);
+
+      if (data.action === "like") {
+        // Increment the like count in Redis
+        const newLikeCount = await redisClient.incr(LIKE_COUNT_KEY);
+        broadcastLikeCount(newLikeCount);
+      } else if (data.action === "dislike") {
+        // Decrement the like count in Redis
+        const newLikeCount = await redisClient.decr(LIKE_COUNT_KEY);
+        broadcastLikeCount(newLikeCount);
+      }
+    } catch (err) {
+      console.error("Error processing WebSocket message:", err);
+    }
   });
 
   // Handle disconnection
@@ -48,21 +69,19 @@ wss.on("connection", (ws) => {
 function broadcastViewerCount(count) {
   wss.clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify({ viewers: count }));
+      client.send(JSON.stringify({ type: "viewers", count }));
     }
   });
 }
 
-// Express API endpoint for viewer count
-app.get("/viewers", async (req, res) => {
-  try {
-    const count = await redisClient.get(VIEWER_COUNT_KEY);
-    res.json({ viewers: parseInt(count, 10) });
-  } catch (err) {
-    console.error(err);
-    res.status(500).send("Error fetching viewer count.");
-  }
-});
+// Broadcast like count to all connected clients
+function broadcastLikeCount(count) {
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify({ type: "likes", count }));
+    }
+  });
+}
 
 // Handle WebSocket upgrades
 app.server = app.listen(PORT, () => {
