@@ -43,6 +43,11 @@ wss.on("connection", (ws) => {
     );
   });
 
+  // Send the initial like count to the client
+  redisClient.get(LIKE_COUNT_KEY).then((likeCount) => {
+    ws.send(JSON.stringify({ type: "likes", count: likeCount }));
+  });
+
   // Listen for messages from the client
   ws.on("message", async (message) => {
     try {
