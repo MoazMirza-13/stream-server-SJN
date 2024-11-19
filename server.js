@@ -18,6 +18,7 @@ const wss = new WebSocket.Server({ noServer: true });
 // Keys in Redis for
 const VIEWER_COUNT_KEY = "viewer_count";
 const LIKE_COUNT_KEY = "like_count";
+const COMMENTS_KEY = "comments";
 
 // Reset viewer count when the server starts
 (async () => {
@@ -35,10 +36,37 @@ wss.on("connection", (ws) => {
     broadcastViewerCount(viewerCount);
   });
 
+  // Send the latest N comments to the newly connected client
+  redisClient.lRange(COMMENTS_KEY, 0, 80).then((comments) => {
+    ws.send(
+      JSON.stringify({ type: "comments", comments: comments.map(JSON.parse) })
+    );
+  });
+
   // Listen for messages from the client
   ws.on("message", async (message) => {
     try {
       const data = JSON.parse(message);
+
+      if (data.action === "comment") {
+        const username = data.username?.trim() || "Unknown";
+        const message = data.message?.trim();
+
+        if (!message) {
+          console.error("Invalid comment data:", data);
+          return; // Ignore invalid messages
+        }
+
+        const comment = {
+          username,
+          message,
+          timestamp: Date.now(),
+        };
+
+        await redisClient.lPush(COMMENTS_KEY, JSON.stringify(comment));
+        await redisClient.lTrim(COMMENTS_KEY, 0, 80);
+        broadcastComment(comment);
+      }
 
       if (data.action === "like") {
         // Increment the like count in Redis
@@ -79,6 +107,15 @@ function broadcastLikeCount(count) {
   wss.clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
       client.send(JSON.stringify({ type: "likes", count }));
+    }
+  });
+}
+
+// Broadcast a new comment to all connected clients
+function broadcastComment(comment) {
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify({ type: "new_comment", comment }));
     }
   });
 }
