@@ -1,6 +1,7 @@
 const express = require("express");
 const WebSocket = require("ws");
 const Redis = require("redis");
+const { exec } = require("child_process");
 
 // Create Redis client
 const redisClient = Redis.createClient();
@@ -91,10 +92,16 @@ wss.on("connection", (ws) => {
   ws.on("close", async () => {
     console.log("WebSocket connection closed.");
 
-    redisClient.decr(VIEWER_COUNT_KEY).then(async () => {
-      const viewerCount = await redisClient.get(VIEWER_COUNT_KEY);
-      broadcastViewerCount(viewerCount);
-    });
+    const currentViewerCount = await redisClient.get(VIEWER_COUNT_KEY);
+
+    // Only decrement if the current viewer count is greater than 0
+    if (currentViewerCount > 0) {
+      await redisClient.decr(VIEWER_COUNT_KEY);
+    }
+
+    // Get the updated viewer count and broadcast it
+    const viewerCount = await redisClient.get(VIEWER_COUNT_KEY);
+    broadcastViewerCount(viewerCount);
   });
 });
 
@@ -124,6 +131,21 @@ function broadcastComment(comment) {
     }
   });
 }
+
+app.post("/reset", (req, res) => {
+  exec("./reset.sh", (error, stdout, stderr) => {
+    if (error) {
+      console.error(`exec error: ${error}`);
+      return res.status(500).send("Error resetting system");
+    }
+    if (stderr) {
+      console.error(`stderr: ${stderr}`);
+      return res.status(500).send("Error resetting system");
+    }
+    console.log(`stdout: ${stdout}`);
+    res.send("System reset successfully.");
+  });
+});
 
 // Handle WebSocket upgrades
 app.server = app.listen(PORT, () => {
